@@ -16,7 +16,7 @@ This custom aggregate function extends MySQL's built-in functionality by providi
 
 1. Clone this repository:
    ```bash
-   git clone [your-repository-url]
+   git clone https://github.com/DaanyaalSobani/MySql-Custom-Aggregate-UDFs
    ```
 
 2. Build the aggregate function:
