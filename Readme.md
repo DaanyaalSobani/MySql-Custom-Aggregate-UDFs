@@ -21,6 +21,9 @@ This custom aggregate function extends MySQL's built-in functionality by providi
 
 2. Build the aggregate function:
    ```bash
+   mkdir build 
+   cd build 
+   cmake .. 
    make
    ```
 
