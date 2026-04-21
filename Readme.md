@@ -4,7 +4,7 @@ This project is the source code for a simple aggregate function that can be load
 
 ## Overview
 
-This custom aggregate function extends MySQL's built-in functionality by providing [describe the specific functionality your aggregate function provides].
+This custom aggregate function extends MySQL's built-in functionality by providing an aggregate function that multiplies numbers in a group,
 
 ## Prerequisites
 
