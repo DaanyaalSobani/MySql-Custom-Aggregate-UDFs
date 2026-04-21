@@ -134,3 +134,14 @@ GROUP BY order_id;
 ```
 
 NULL values in the column are skipped. A group containing only NULLs returns `1.0`.
+
+## Reference
+
+The full specification for writing MySQL UDFs is in the official docs:
+[MySQL 8.4 — Adding a Loadable Function](https://dev.mysql.com/doc/extending-mysql/8.4/en/adding-loadable-function.html)
+
+Relevant sections:
+
+- **`UDF_INIT`** — struct passed to every lifecycle function; its `ptr` field is the standard way to carry per-query state across `_init` → `_clear` → `_add` → main → `_deinit` calls
+- **`UDF_ARGS`** — struct describing the arguments MySQL passes to each call; `args->args[n]` is a `char*` that MySQL sets to `NULL` for SQL NULLs, which is how `product_add` detects and skips them
+- **Naming rules** — for an aggregate function named `xxx`, MySQL expects exactly five symbols exported from the `.so`: `xxx_init`, `xxx_clear`, `xxx_add`, `xxx`, and `xxx_deinit`
