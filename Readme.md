@@ -137,6 +137,8 @@ NULL values in the column are skipped. A group containing only NULLs returns `1.
 
 ## Reference
 
+- [YouTube — MySQL UDF walkthrough](https://www.youtube.com/watch?v=ldjdUZDKAFA)
+
 The full specification for writing MySQL UDFs is in the official docs:
 [MySQL 8.4 — Adding a Loadable Function](https://dev.mysql.com/doc/extending-mysql/8.4/en/adding-loadable-function.html)
 
