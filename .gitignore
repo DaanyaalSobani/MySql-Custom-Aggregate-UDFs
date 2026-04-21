@@ -1,2 +1,12 @@
+# Build output directories
 build/
+build-arm/
+
+# Compiled artifacts
 product.so
+
+# VSCode
+.vscode/
+
+# Claude Code memory
+.claude/
