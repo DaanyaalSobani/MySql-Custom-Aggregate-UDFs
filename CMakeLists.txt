@@ -41,11 +41,14 @@ if(NOT BUILD_ARM AND NOT BUILD_X86)
     message(STATUS "Using native compilation")
 endif()
 
-project(udf_product)
+project(mysql_custom_udfs)
 
-add_library(product SHARED src/product.cpp)
+set(UDFS product median mode)
 
-set_target_properties(product PROPERTIES
-    PREFIX ""
-    POSITION_INDEPENDENT_CODE ON
-)
+foreach(udf IN LISTS UDFS)
+    add_library(${udf} SHARED src/${udf}.cpp)
+    set_target_properties(${udf} PROPERTIES
+        PREFIX ""
+        POSITION_INDEPENDENT_CODE ON
+    )
+endforeach()

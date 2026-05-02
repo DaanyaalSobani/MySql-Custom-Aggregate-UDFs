@@ -19,17 +19,57 @@ SELECT product(value) FROM t;
 | NULL handling | NULL values are skipped (not treated as zero) |
 | Empty group | Returns `1.0` (multiplicative identity) |
 
+### `median(value)`
+
+Returns the median of all non-NULL values in a group. For an even-sized group, returns the average of the two middle values.
+
+```sql
+SELECT median(value) FROM t;
+```
+
+| Behaviour | Detail |
+| --------- | ------ |
+| Return type | `DOUBLE` |
+| Argument | Any numeric column or expression |
+| NULL handling | NULL values are skipped |
+| Empty group | Returns `NULL` |
+| Memory | Buffers all non-NULL values for the group; O(n) per group |
+
+### `mode(value)`
+
+Returns the most frequently occurring non-NULL value in a group. If multiple values tie for most frequent, an arbitrary one of them is returned.
+
+```sql
+SELECT mode(value) FROM t;
+```
+
+| Behaviour | Detail |
+| --------- | ------ |
+| Return type | `DOUBLE` |
+| Argument | Any numeric column or expression |
+| NULL handling | NULL values are skipped |
+| Empty group | Returns `NULL` |
+| Memory | Hash map keyed by distinct values; O(d) per group where `d` is distinct value count |
+
 ## How it works
 
-MySQL aggregate UDFs follow a four-function lifecycle that MySQL calls once per query (or once per group when used with `GROUP BY`):
+MySQL aggregate UDFs follow a five-function lifecycle that MySQL calls once per query (or once per group when used with `GROUP BY`). For an aggregate named `xxx`:
 
 | Function | Called when | What it does |
 | -------- | ----------- | ------------ |
-| `product_init` | Query starts | Allocates state, validates argument count, coerces input to `REAL` |
-| `product_clear` | Each new group begins | Resets accumulator to `1.0` |
-| `product_add` | Each row in the group | Multiplies the accumulator by the row's value; skips NULLs |
-| `product` | Group is complete | Returns the accumulated result |
-| `product_deinit` | Query finishes | Frees allocated state |
+| `xxx_init` | Query starts | Allocates per-query state, validates argument count, coerces input types |
+| `xxx_clear` | Each new group begins | Resets the accumulator |
+| `xxx_add` | Each row in the group | Folds the row's value into the accumulator; skips NULLs |
+| `xxx` | Group is complete | Returns the accumulated result |
+| `xxx_deinit` | Query finishes | Frees state allocated in `_init` |
+
+Each UDF in this repo follows that pattern with its own state shape:
+
+| UDF | State held in `UDF_INIT->ptr` | Final step |
+| --- | ----------------------------- | ---------- |
+| `product` | `double` accumulator (init `1.0`) | Return accumulator |
+| `median` | `std::vector<double>` of all values | `nth_element` to find middle, average two middles if even count |
+| `mode` | `std::unordered_map<double, uint64_t>` of value → count | Linear scan for max count |
 
 ## Prerequisites
 
@@ -67,23 +107,26 @@ cmake .. -DBUILD_X86=ON
 make
 ```
 
-The compiled library is `product.so`.
+The compiled libraries are `product.so`, `median.so`, and `mode.so` — one per UDF.
 
 ## Installation
 
 ### Manual
 
-1. Copy the library to MySQL's plugin directory:
+1. Copy the libraries you want to use into MySQL's plugin directory:
    ```bash
-   sudo cp build/product.so $(mysql --help | grep 'plugin-dir' | awk '{print $2}')
+   PLUGIN_DIR=$(mysql --help | grep 'plugin-dir' | awk '{print $2}')
+   sudo cp build/product.so build/median.so build/mode.so "$PLUGIN_DIR"
    ```
 
-2. Register the function in MySQL:
+2. Register each function in MySQL:
    ```sql
    CREATE AGGREGATE FUNCTION product RETURNS REAL SONAME 'product.so';
+   CREATE AGGREGATE FUNCTION median  RETURNS REAL SONAME 'median.so';
+   CREATE AGGREGATE FUNCTION mode    RETURNS REAL SONAME 'mode.so';
    ```
 
-3. To unload it later:
+3. To unload one later:
    ```sql
    DROP FUNCTION product;
    ```
@@ -92,10 +135,10 @@ The compiled library is `product.so`.
 
 The `test_server/` directory contains a Docker Compose setup that spins up a MySQL instance with the plugin pre-loaded — useful for quick testing without touching a local MySQL installation.
 
-1. Build the library and copy it into the plugin mount:
+1. Build the libraries and copy them into the plugin mount:
    ```bash
    mkdir build && cd build && cmake .. && make && cd ..
-   cp build/product.so test_server/plugin/
+   cp build/product.so build/median.so build/mode.so test_server/plugin/
    ```
 
 2. Start the container:
@@ -104,7 +147,7 @@ The `test_server/` directory contains a Docker Compose setup that spins up a MyS
    docker compose up -d
    ```
 
-3. Connect and load the function:
+3. Connect and load the functions:
    ```bash
    docker compose exec mysql mysql -uroot -proot test
    ```
@@ -112,6 +155,8 @@ The `test_server/` directory contains a Docker Compose setup that spins up a MyS
    ```sql
    SOURCE /entrypoint.sh;  -- or run load_function.sql manually
    CREATE AGGREGATE FUNCTION product RETURNS REAL SONAME 'product.so';
+   CREATE AGGREGATE FUNCTION median  RETURNS REAL SONAME 'median.so';
+   CREATE AGGREGATE FUNCTION mode    RETURNS REAL SONAME 'mode.so';
    ```
 
    The container's entrypoint handles the plugin directory automatically — if MySQL's actual plugin path differs from `/usr/lib/mysql/plugin`, it creates a symlink so the mounted `.so` is found regardless.
@@ -127,13 +172,18 @@ SELECT category, product(multiplier)
 FROM adjustments
 GROUP BY category;
 
--- Works inside expressions
-SELECT order_id, product(quantity) * base_price AS total
-FROM order_lines
-GROUP BY order_id;
+-- Median latency per endpoint
+SELECT endpoint, median(latency_ms)
+FROM requests
+GROUP BY endpoint;
+
+-- Most common rating per product
+SELECT product_id, mode(rating)
+FROM reviews
+GROUP BY product_id;
 ```
 
-NULL values in the column are skipped. A group containing only NULLs returns `1.0`.
+NULL values are skipped by every aggregate. A group containing only NULLs returns the identity for `product` (`1.0`) and `NULL` for `median` and `mode`.
 
 ## Reference
 
@@ -145,5 +195,6 @@ The full specification for writing MySQL UDFs is in the official docs:
 Relevant sections:
 
 - **`UDF_INIT`** — struct passed to every lifecycle function; its `ptr` field is the standard way to carry per-query state across `_init` → `_clear` → `_add` → main → `_deinit` calls
-- **`UDF_ARGS`** — struct describing the arguments MySQL passes to each call; `args->args[n]` is a `char*` that MySQL sets to `NULL` for SQL NULLs, which is how `product_add` detects and skips them
+- **`UDF_ARGS`** — struct describing the arguments MySQL passes to each call; `args->args[n]` is a `char*` that MySQL sets to `NULL` for SQL NULLs, which is how `_add` detects and skips them
 - **Naming rules** — for an aggregate function named `xxx`, MySQL expects exactly five symbols exported from the `.so`: `xxx_init`, `xxx_clear`, `xxx_add`, `xxx`, and `xxx_deinit`
+- **`initid->maybe_null`** — set to `1` in `_init` for `median` and `mode` so MySQL knows the result can be NULL on empty groups; `product` leaves it default since it always returns `1.0`
